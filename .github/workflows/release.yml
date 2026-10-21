@@ -26,8 +26,7 @@ jobs:
         shell: pwsh
         run: |
           $p = Start-Process dist\MultiOutAudio.exe -PassThru
-          Start-Sleep 6
-          if ($p.HasExited) { throw "exe exited early with code $($p.ExitCode)" }
+          Start-Sleep 8`n          $p.Refresh()`n          if ($p.HasExited) { throw "exe exited early with code $($p.ExitCode)" }`n          if ($p.MainWindowTitle -ne "Multi-Out Audio") { throw "main window not shown (title: [$($p.MainWindowTitle)]), probably a startup crash dialog" }
           Stop-Process $p -Force
       - name: Build installer
         shell: pwsh
