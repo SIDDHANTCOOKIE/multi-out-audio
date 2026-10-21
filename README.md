@@ -15,6 +15,12 @@ re-plays it on every device you tick. No virtual audio driver is needed.
 The app keeps playing on its normal Windows device too. Either leave that device unticked, or tick it as one of the outputs
 and silence the original by routing the app to an unused device in Settings > Sound > Volume mixer.
 
+## Themes
+
+Pick one from the **Theme** menu (it is remembered): **Sakura**, **Midnight Idol**, **Matcha Neko**, **Cyber Bot**, **Ocean Breeze**, and **Custom**.
+All mascots are original vector drawings made for this project. For **Custom**, put any PNG or GIF at
+%APPDATA%\bt-app-audio-multi\mascot.png (use art you have the rights to, e.g. CC0/public domain).
+
 ## How it works
 
 - **Capture:** the Windows process-loopback API (`ActivateAudioInterfaceAsync` on `VAD\Process_Loopback`),
