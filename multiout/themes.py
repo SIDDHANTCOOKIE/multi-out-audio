@@ -35,14 +35,24 @@ THEMES = {
 }
 
 
-def load_choice():
+def load_settings():
     try:
-        n = json.loads(CONFIG.read_text(encoding="utf-8")).get("theme")
-        return n if n in THEMES else "Sakura"
+        return json.loads(CONFIG.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return "Sakura"
+        return {}
+
+
+def save_settings(**changes):
+    data = load_settings()
+    data.update(changes)
+    CONFIG.parent.mkdir(parents=True, exist_ok=True)
+    CONFIG.write_text(json.dumps(data), encoding="utf-8")
+
+
+def load_choice():
+    n = load_settings().get("theme")
+    return n if n in THEMES else "Sakura"
 
 
 def save_choice(name):
-    CONFIG.parent.mkdir(parents=True, exist_ok=True)
-    CONFIG.write_text(json.dumps({"theme": name}), encoding="utf-8")
+    save_settings(theme=name)

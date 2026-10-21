@@ -29,16 +29,21 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Multi-Out Audio")
-        self.geometry("540x700")
-        self.minsize(480, 580)
+        self.geometry("560x800")
+        self.minsize(500, 700)
         self.mirror = None
         self.apps = {}
         self.devs = []
         self.state = {}  # device name -> (BooleanVar, DoubleVar), survives theme changes
         self.app_var = tk.StringVar()
         self.theme_var = tk.StringVar(value=themes.load_choice())
+        saved = themes.load_settings()
+        self.latency = saved.get("latency", {})  # device name -> measured seconds
+        self.auto_var = tk.BooleanVar(value=True)
+        self.meters = {}
         self.build_ui()
         self.refresh()
+        self.poll()
         self.protocol("WM_DELETE_WINDOW", self.close)
 
     # ---- layout -------------------------------------------------------------
@@ -81,12 +86,17 @@ class App(tk.Tk):
                              fg="white", activebackground=t["deep"], activeforeground="white", relief="flat",
                              font=(F, 11, "bold"), padx=22, pady=6, cursor="hand2", bd=0)
         self.btn.pack(side="right")
-        tk.Label(foot, text="Theme", bg=t["bg"], fg=t["deep"], font=(F, 10, "bold")).pack(side="left")
+        self.sync_btn = tk.Button(foot, text="Auto-sync", command=self.autosync, bg=t["card"], fg=t["deep"],
+                                  activebackground=t["accent"], relief="flat", font=(F, 10, "bold"), padx=12, pady=5,
+                                  highlightthickness=1, highlightbackground=t["accent"], cursor="hand2")
+        self.sync_btn.pack(side="right", padx=8)
         tm = tk.OptionMenu(foot, self.theme_var, *themes.THEMES, command=self.change_theme)
         tm.config(bg=t["card"], fg=t["ink"], activebackground=t["accent"], activeforeground="white", relief="flat",
-                  font=(F, 10), highlightthickness=1, highlightbackground=t["accent"], width=14)
+                  font=(F, 10), highlightthickness=1, highlightbackground=t["accent"], width=12)
         tm["menu"].config(bg=t["card"], fg=t["ink"], font=(F, 10))
-        tm.pack(side="left", padx=8)
+        tm.pack(side="left")
+        tk.Checkbutton(foot, text="auto delay", variable=self.auto_var, command=self.sync, bg=t["bg"], fg=t["ink"],
+                       font=(F, 9), activebackground=t["bg"], selectcolor=t["card"]).pack(side="left", padx=8)
 
         self.build_devices()
         self.refresh_apps()
@@ -95,21 +105,31 @@ class App(tk.Tk):
         t, F = self.t, self.t["font"]
         for w in self.list.winfo_children():
             w.destroy()
+        self.meters = {}
         for _idx, name in self.devs:
-            on, ms = self.state.setdefault(name, (tk.BooleanVar(), tk.DoubleVar(value=0)))
+            on, vol, ms = self.state.setdefault(
+                name, (tk.BooleanVar(), tk.DoubleVar(value=100), tk.DoubleVar(value=0)))
             card = tk.Frame(self.list, bg=t["card"], highlightbackground=t["line"], highlightthickness=1)
-            card.pack(fill="x", pady=4)
-            tk.Checkbutton(card, text=name, variable=on, command=self.sync, bg=t["card"], fg=t["ink"], font=(F, 10),
+            card.pack(fill="x", pady=3)
+            top = tk.Frame(card, bg=t["card"])
+            top.pack(fill="x", padx=8, pady=(5, 0))
+            tk.Checkbutton(top, text=name, variable=on, command=self.sync, bg=t["card"], fg=t["ink"], font=(F, 10),
                            activebackground=t["card"], activeforeground=t["ink"], selectcolor=t["card"],
-                           anchor="w").pack(fill="x", padx=8, pady=(6, 0))
-            row = tk.Frame(card, bg=t["card"])
-            row.pack(fill="x", padx=12, pady=(0, 6))
-            tk.Scale(row, from_=0, to=500, orient="horizontal", variable=ms, showvalue=False,
-                     command=lambda _v: self.sync(), bg=t["deep"], troughcolor=t["trough"], activebackground=t["accent"],
-                     highlightthickness=0, sliderrelief="flat", sliderlength=22, width=14, bd=0,
-                     length=300).pack(side="left", fill="x", expand=True)
-            tk.Label(row, textvariable=ms, bg=t["card"], fg=t["deep"], width=4, font=(F, 10, "bold")).pack(side="left")
-            tk.Label(row, text="ms", bg=t["card"], fg=t["ink"], font=(F, 8)).pack(side="left")
+                           anchor="w").pack(side="left", fill="x", expand=True)
+            meter = tk.Canvas(top, width=60, height=8, bg=t["trough"], highlightthickness=0)
+            meter.pack(side="right", padx=4)
+            bar = meter.create_rectangle(0, 0, 0, 8, fill=t["accent"], outline="")
+            self.meters[name] = (meter, bar)
+            for label, var, hi, unit in (("Volume", vol, 100, "%"), ("Fine-tune delay", ms, 300, "ms")):
+                row = tk.Frame(card, bg=t["card"])
+                row.pack(fill="x", padx=12, pady=(0, 3))
+                tk.Label(row, text=label, bg=t["card"], fg=t["ink"], font=(F, 8), width=14, anchor="w").pack(side="left")
+                tk.Scale(row, from_=0, to=hi, orient="horizontal", variable=var, showvalue=False,
+                         command=lambda _v: self.sync(), bg=t["deep"], troughcolor=t["trough"],
+                         activebackground=t["accent"], highlightthickness=0, sliderrelief="flat", sliderlength=18,
+                         width=10, bd=0).pack(side="left", fill="x", expand=True)
+                tk.Label(row, textvariable=var, bg=t["card"], fg=t["deep"], width=4, font=(F, 9, "bold")).pack(side="left")
+                tk.Label(row, text=unit, bg=t["card"], fg=t["ink"], font=(F, 8)).pack(side="left")
         if not self.devs:
             tk.Label(self.list, text="No output devices found...", bg=t["bg"], fg=t["ink"]).pack(pady=20)
 
@@ -139,8 +159,69 @@ class App(tk.Tk):
         if self.app_var.get() not in self.apps:
             self.app_var.set(names[0] if names else "(nothing is playing)")
 
+    def auto_delays(self, names):
+        """Delay (ms) that equalises saved acoustic latencies; {} if any device is uncalibrated."""
+        lat = self.latency
+        if not self.auto_var.get() or not names or any(n not in lat for n in names):
+            return {}
+        top = max(lat[n] for n in names)
+        return {n: (top - lat[n]) * 1000 for n in names}
+
     def wanted(self):
-        return {i: int(self.state[n][1].get()) for i, n in self.devs if self.state[n][0].get()}
+        ticked = [(i, n) for i, n in self.devs if self.state[n][0].get()]
+        auto = self.auto_delays([n for _, n in ticked])
+        return {i: (int(auto.get(n, 0) + self.state[n][2].get()), self.state[n][1].get() / 100)
+                for i, n in ticked}
+
+    def poll(self):
+        """Update level meters and surface playback errors."""
+        m = self.mirror
+        for i, n in self.devs:
+            meter, bar = self.meters.get(n, (None, None))
+            if meter:
+                lvl = m.sinks[i].level if m and i in m.sinks else 0
+                meter.coords(bar, 0, 0, min(1, lvl * 3) * 60, 8)
+        if m and m.error:
+            self.say.config(text=m.error)
+            self.toggle()
+        self.after(150, self.poll)
+
+    def autosync(self):
+        """Measure each ticked device with the mic, save, and apply."""
+        from .calibrate import measure
+        ticked = [(i, n) for i, n in self.devs if self.state[n][0].get()]
+        if len(ticked) < 2 or self.mirror:
+            self.say.config(text="Tick at least two devices (and press Stop first), then Auto-sync.")
+            return
+        self.sync_btn.config(state="disabled")
+        self.say.config(text="Listening... keep each device near the mic. Clicks incoming!")
+
+        def work():
+            out, errs = {}, []
+            for i, n in ticked:
+                try:
+                    lat, conf = measure(i)
+                except Exception as e:  # noqa: BLE001
+                    errs.append(f"{n}: {e}")
+                    continue
+                if lat is None or conf < 0.3:
+                    errs.append(f"{n}: couldn't hear it")
+                else:
+                    out[n] = lat
+            self.after(0, lambda: self.autosync_done(out, errs))
+        import threading
+        threading.Thread(target=work, daemon=True).start()
+
+    def autosync_done(self, out, errs):
+        self.sync_btn.config(state="normal")
+        self.latency.update(out)
+        themes.save_settings(latency=self.latency)
+        if errs:
+            self.say.config(text="Auto-sync problem: " + "; ".join(errs)[:200] +
+                                 "\nMove the device closer to your mic and retry.")
+        else:
+            shown = ", ".join(f"{n.split('(')[-1].rstrip(')')} {v * 1000:.0f}ms" for n, v in out.items())
+            self.say.config(text=f"Synced! Measured: {shown}.\nSaved. It's applied automatically on Start.")
 
     def sync(self):
         if self.mirror:

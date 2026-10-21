@@ -10,7 +10,8 @@ re-plays it on every device you tick. No virtual audio driver is needed.
 
 1. Start playing audio in the app.
 2. Run `MultiOutAudio.exe`, choose the app, tick the devices, press **Start**.
-3. Bluetooth is slower than wired. If you hear an echo, raise the delay on the *faster* (wired) device until they line up.
+3. Set each device's **Volume**. A little bar beside each device shows audio arriving, so you can see it is working.
+4. **Auto-sync**: tick two or more devices, press Auto-sync, and hold each device near your microphone. The app plays clicks through each device, measures its real delay, saves it, and equalises them automatically on every Start. **Fine-tune delay** adds a manual nudge on top.
 
 The app keeps playing on its normal Windows device too. Either leave that device unticked, or tick it as one of the outputs
 and silence the original by routing the app to an unused device in Settings > Sound > Volume mixer.
@@ -43,7 +44,7 @@ python -m multiout --app spotify.exe --device Speakers --device "Headphones:120"
 
 - Windows 10 2004+ / Windows 11 only.
 - Devices run on separate clocks, so very long sessions can drift slightly; the buffer is bounded to correct this.
-- Delay is set by ear. There is no automatic Bluetooth latency measurement.
+- Auto-sync needs a working microphone that can hear the device (hold earbuds against it). Windows cannot report Bluetooth latency, so it is measured acoustically.
 - Captures the app's process tree, so a browser's tabs are all included.
 
 ## License
