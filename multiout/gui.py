@@ -1,5 +1,6 @@
 """Themed window: pick an app, tick the devices that should play it, tune per-device delay."""
 import ctypes
+import sys
 import tkinter as tk
 from pathlib import Path
 from tkinter import messagebox
@@ -21,7 +22,11 @@ REFRESH_MS = 3000
 def audio_apps():
     """{exe name: pid} for processes with an audio session."""
     apps = {}
-    for s in AudioUtilities.GetAllSessions():
+    try:
+        sessions = AudioUtilities.GetAllSessions()
+    except Exception:  # noqa: BLE001  (no audio service, e.g. headless CI)
+        return apps
+    for s in sessions:
         if s.ProcessId:
             try:
                 apps.setdefault(psutil.Process(s.ProcessId).name(), s.ProcessId)
@@ -305,4 +310,10 @@ def main():
         ctypes.windll.shcore.SetProcessDpiAwareness(1)  # crisp text on high-DPI screens
     except (AttributeError, OSError):
         pass
-    App().mainloop()
+    app = App()
+    if "--selftest" in sys.argv:  # used by CI: build the window, prove it works, exit
+        app.update()
+        Path(sys.argv[sys.argv.index("--selftest") + 1]).write_text("ok")
+        app.destroy()
+        return
+    app.mainloop()
