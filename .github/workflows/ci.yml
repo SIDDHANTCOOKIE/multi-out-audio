@@ -1,0 +1,19 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install -r requirements.txt ruff
+      - run: ruff check multiout --select E9,F --ignore F401
+      - name: Import smoke test
+        run: python -c "import multiout.mirror, multiout.capture, multiout.calibrate, multiout.themes, multiout.mascots; from multiout.themes import THEMES; from multiout.mascots import DRAW; [DRAW[t['mascot']](t, b, s) for t in THEMES.values() if t['mascot'] in DRAW for b in (0, 1) for s in (0, 1)]"

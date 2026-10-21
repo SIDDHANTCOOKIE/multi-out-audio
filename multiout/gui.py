@@ -1,12 +1,17 @@
 """Themed window: pick an app, tick the devices that should play it, tune per-device delay."""
+import ctypes
 import tkinter as tk
+from pathlib import Path
 from tkinter import messagebox
 
 import psutil
 import sounddevice as sd
 from pycaw.pycaw import AudioUtilities
 
+from PIL import Image, ImageTk
+
 from . import themes
+from .icons import exe_icon, friendly_name
 from .mascots import Mascot
 from .mirror import Mirror, output_devices
 
@@ -39,7 +44,14 @@ class App(tk.Tk):
         self.theme_var = tk.StringVar(value=themes.load_choice())
         saved = themes.load_settings()
         self.latency = saved.get("latency", {})  # device name -> measured seconds
+        self.saved_dev = saved.get("devices", {})  # device name -> [ticked, volume, nudge]
+        try:
+            self.iconphoto(True, ImageTk.PhotoImage(Image.open(Path(__file__).with_name("icon.png"))))
+        except (OSError, tk.TclError):
+            pass
         self.auto_var = tk.BooleanVar(value=True)
+        self.app_label = tk.StringVar()
+        self.app_cache = {}
         self.meters = {}
         self.build_ui()
         self.refresh()
@@ -68,12 +80,14 @@ class App(tk.Tk):
         pick = tk.Frame(self, bg=t["bg"])
         pick.pack(fill="x", padx=18, pady=(10, 4))
         tk.Label(pick, text="App", bg=t["bg"], fg=t["deep"], font=(F, 11, "bold")).pack(side="left")
-        self.app_menu = tk.OptionMenu(pick, self.app_var, "")
-        self.app_menu.config(bg=t["card"], fg=t["ink"], activebackground=t["accent"], activeforeground="white",
-                             relief="flat", font=(F, 10), highlightthickness=1, highlightbackground=t["accent"],
-                             width=26, anchor="w")
-        self.app_menu["menu"].config(bg=t["card"], fg=t["ink"], font=(F, 10))
-        self.app_menu.pack(side="left", padx=10, fill="x", expand=True)
+        self.app_btn = tk.Menubutton(pick, textvariable=self.app_label, compound="left", bg=t["card"], fg=t["ink"],
+                                     activebackground=t["accent"], activeforeground="white", relief="flat",
+                                     font=(F, 10), highlightthickness=1, highlightbackground=t["accent"],
+                                     anchor="w", padx=8, pady=4, indicatoron=True)
+        self.app_menu = tk.Menu(self.app_btn, tearoff=0, bg=t["card"], fg=t["ink"], font=(F, 10),
+                                activebackground=t["accent"], activeforeground="white")
+        self.app_btn["menu"] = self.app_menu
+        self.app_btn.pack(side="left", padx=10, fill="x", expand=True)
 
         tk.Label(self, text="Play on (slide to add delay so they line up)", bg=t["bg"], fg=t["deep"],
                  font=(F, 10, "bold")).pack(anchor="w", padx=18, pady=(8, 2))
@@ -107,8 +121,10 @@ class App(tk.Tk):
             w.destroy()
         self.meters = {}
         for _idx, name in self.devs:
-            on, vol, ms = self.state.setdefault(
-                name, (tk.BooleanVar(), tk.DoubleVar(value=100), tk.DoubleVar(value=0)))
+            if name not in self.state:
+                on0, vol0, ms0 = self.saved_dev.get(name, (False, 100, 0))
+                self.state[name] = (tk.BooleanVar(value=on0), tk.DoubleVar(value=vol0), tk.DoubleVar(value=ms0))
+            on, vol, ms = self.state[name]
             card = tk.Frame(self.list, bg=t["card"], highlightbackground=t["line"], highlightthickness=1)
             card.pack(fill="x", pady=3)
             top = tk.Frame(card, bg=t["card"])
@@ -149,15 +165,38 @@ class App(tk.Tk):
             self.refresh_apps()
         self.after(REFRESH_MS, self.refresh)
 
+    def app_info(self, exe, pid):
+        """(friendly name, PhotoImage or None), cached per exe."""
+        if exe not in self.app_cache:
+            try:
+                path = psutil.Process(pid).exe()
+                img = exe_icon(path)
+                self.app_cache[exe] = (friendly_name(path, exe), ImageTk.PhotoImage(img) if img else None)
+            except (psutil.Error, OSError):
+                self.app_cache[exe] = (exe, None)
+        return self.app_cache[exe]
+
+    def pick_app(self, exe):
+        self.app_var.set(exe)
+        label, icon = self.app_cache.get(exe, (exe, None))
+        self.app_label.set(" " + label)
+        self.app_btn.config(image=icon or "")
+
     def refresh_apps(self):
         self.apps = audio_apps()
-        names = sorted(self.apps)
-        menu = self.app_menu["menu"]
-        menu.delete(0, "end")
-        for n in names or ["(nothing is playing)"]:
-            menu.add_command(label=n, command=lambda v=n: self.app_var.set(v))
+        self.app_menu.delete(0, "end")
+        for exe in sorted(self.apps, key=lambda e: self.app_info(e, self.apps[e])[0].lower()):
+            label, icon = self.app_info(exe, self.apps[exe])
+            self.app_menu.add_command(label=" " + label, image=icon or "", compound="left",
+                                      command=lambda e=exe: self.pick_app(e))
+        if not self.apps:
+            self.app_menu.add_command(label="(nothing is playing)", state="disabled")
         if self.app_var.get() not in self.apps:
-            self.app_var.set(names[0] if names else "(nothing is playing)")
+            self.pick_app(sorted(self.apps)[0]) if self.apps else (self.app_var.set(""),
+                                                                    self.app_label.set("(nothing is playing)"),
+                                                                    self.app_btn.config(image=""))
+        else:
+            self.pick_app(self.app_var.get())
 
     def auto_delays(self, names):
         """Delay (ms) that equalises saved acoustic latencies; {} if any device is uncalibrated."""
@@ -224,6 +263,7 @@ class App(tk.Tk):
             self.say.config(text=f"Synced! Measured: {shown}.\nSaved. It's applied automatically on Start.")
 
     def sync(self):
+        themes.save_settings(devices={n: [v[0].get(), v[1].get(), v[2].get()] for n, v in self.state.items()})
         if self.mirror:
             self.mirror.set_sinks(self.wanted())
 
@@ -251,7 +291,7 @@ class App(tk.Tk):
             return
         self.btn.config(text=t["stop"])
         self.mascot.sing(True)
-        self.say.config(text=f"Playing {self.app_var.get()} on {len(self.wanted())} device(s) ♪\n"
+        self.say.config(text=f"Playing {self.app_label.get().strip()} on {len(self.wanted())} device(s) ♪\n"
                              "Hear an echo? Slide the delay on the faster device.")
 
     def close(self):
@@ -261,4 +301,8 @@ class App(tk.Tk):
 
 
 def main():
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(1)  # crisp text on high-DPI screens
+    except (AttributeError, OSError):
+        pass
     App().mainloop()
